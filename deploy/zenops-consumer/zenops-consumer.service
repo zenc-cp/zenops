@@ -1,0 +1,27 @@
+[Unit]
+Description=ZenOps brain-inbox consumer (per ADR-025)
+Documentation=https://github.com/zenc-cp/zenbrain/blob/main/docs/adr/ADR-025-zenops-specialist-abstraction.md
+After=network.target
+
+[Service]
+Type=simple
+User=azureuser
+Group=azureuser
+WorkingDirectory=/home/azureuser/hermes-agent
+EnvironmentFile=/etc/zenops-consumer.env
+ExecStart=/home/azureuser/hermes-agent/.venv/bin/python -m agent.specialists.consumer
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zenops-consumer
+
+# Security hardening (least privilege)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/var/lib/design-e/results /var/lib/design-e/brain-inbox /var/log/zenops-consumer
+
+[Install]
+WantedBy=multi-user.target
