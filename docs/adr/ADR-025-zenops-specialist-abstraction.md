@@ -176,15 +176,27 @@ These get their own follow-up ADRs only if and when the work demands them:
 1. **Concurrency:** what happens when two `dispatch_specialist` calls arrive concurrently? **Resolved**: each dispatch instantiates its own `AIAgent` via the gateway's per-request construction pattern (verified at `gateway/platforms/api_server.py:998` and 5 other call sites). No shared-state race at the agent level. Tool-level concurrency (file system, AOAI rate limits) is the consumer's responsibility.
 2. **Per-specialist memory:** should each specialist have its own context window or share Hermes's session memory? **Resolved**: per-dispatch fresh session. Same evidence as concurrency — per-request `AIAgent` means no carried context across dispatches. Specialists don't accrue independent persistent state inside the agent; persistence (if needed) goes through `record_event` or external storage.
 
-## Blocking prerequisite for implementation (NOT this ADR's job, but flagged as a HARD BLOCKER)
+## Blocking prerequisite for implementation — RESOLVED 2026-06-10
 
-> **Implementation of this ADR cannot ship until a result-retrieval surface exists.** The `record_event` bus has a writer but no reader. Callers of `dispatch_specialist` cannot retrieve their dispatch's result without one of:
+> **Status: RESOLVED.** The result-retrieval surface flagged as a HARD BLOCKER in v1 of this ADR shipped via option (b) — the status-file convention. Verified by audit-adr025-e2e on 2026-06-10.
 
-- A `list_events(filter_by=task_id|specialist|since=...)` RPC added to `design_e_endpoint.py`, OR
-- A status-file convention at `/var/lib/design-e/results/{task_id}.json` written by the dispatch consumer and polled by callers, OR
-- A new server-sent-events (SSE) / WebSocket endpoint that pushes events to subscribed callers.
+Resolution evidence:
 
-This ADR does not pick one; the follow-up implementation plan must. The constraint is named here so any implementer reads it before starting work. Without resolving this prerequisite, the dispatch surface remains fire-and-forget with no observable outcome, and Shadow A/B (or any other consumer of dispatched specialist outputs) is impossible.
+- **Writer**: `consumer.py:273-277` (`_write_status_atomic`) atomically writes `/var/lib/design-e/results/{task_id}.json` from the hermes-agent consumer.
+- **Reader**: `design_e_endpoint.py:477-535` exposes `GET /rpc/v1/results/{task_id}` with JWT validation, path-traversal defense (regex `^[A-Za-z0-9_\-]{1,128}$` + `is_relative_to()` check), and 404 on missing.
+- **Round-trip test**: `tests/test_results_rpc.py` covers happy path, 404, 401, path traversal, length cap, and UUID format (7 tests, all green).
+- **Audit verdict**: "Is the ADR-025 HARD BLOCKER (result-retrieval reader) still open? **NO**. The round-trip is complete, tested, and deployed."
+
+The follow-up audit (also 2026-06-10) surfaced **separate** gaps that are NOT this ADR's blocker but are tracked separately:
+
+- **F2** — Lease-expiry / reaper missing in consumer. A dead consumer ghosts the task: inbox file is deleted in `finally` regardless of completion, no lease expiry surface, no retry. Tracked in design-e issues + hermes-agent issues.
+- **F3** — `record_event` writer exists with no reader. Audit-log files are write-only. A `GET /rpc/v1/events?task_id=X` reader was added on 2026-06-10 as the canonical reader path. Tracked in design-e.
+
+These are not blockers for ADR-025 (the dispatch round-trip works), but they are blockers for production reliability and observability. See follow-up issues.
+
+### Historical context (original v1 blocker text, kept for archaeology)
+
+The original v1 text said: "Implementation of this ADR cannot ship until a result-retrieval surface exists." That constraint is now satisfied by option (b) from the v1 alternatives list (status-file convention at `/var/lib/design-e/results/{task_id}.json`). The other two alternatives (`list_events` RPC and SSE/WebSocket) were not pursued — option (b) was simpler and sufficient.
 
 ## Implementation pointer (informative, not normative)
 
