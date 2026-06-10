@@ -1,0 +1,14 @@
+[Unit]
+Description=ZenOps VM health watchdog — probes hermes/shim/design-e, alerts on failure
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=azureuser
+EnvironmentFile=/etc/vm-health-watchdog.env
+ExecStart=/usr/bin/python3 /opt/vm-health-watchdog/vm_health_check.py
+# exit codes 0 (silent), 1 (alert posted), 2 (misconfig) all considered handled
+SuccessExitStatus=0 1 2
+StandardOutput=journal
+StandardError=journal
