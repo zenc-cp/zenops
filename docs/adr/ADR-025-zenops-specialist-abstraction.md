@@ -182,7 +182,7 @@ These get their own follow-up ADRs only if and when the work demands them:
 
 Resolution evidence:
 
-- **Writer**: `consumer.py:273-277` (`_write_status_atomic`) atomically writes `/var/lib/design-e/results/{task_id}.json` from the hermes-agent consumer.
+- **Writer**: `consumer.py` defines `_write_status_atomic(results_dir, task_id, payload)` (function def at line 385 in hermes-agent post-PR#5; called from 6 terminal-outcome sites at lines 253, 279, 312, 344, 372, 441). All paths atomically write `/var/lib/design-e/results/{task_id}.json` from the hermes-agent consumer.
 - **Reader**: `design_e_endpoint.py:477-535` exposes `GET /rpc/v1/results/{task_id}` with JWT validation, path-traversal defense (regex `^[A-Za-z0-9_\-]{1,128}$` + `is_relative_to()` check), and 404 on missing.
 - **Round-trip test**: `tests/test_results_rpc.py` covers happy path, 404, 401, path traversal, length cap, and UUID format (7 tests, all green).
 - **Audit verdict**: "Is the ADR-025 HARD BLOCKER (result-retrieval reader) still open? **NO**. The round-trip is complete, tested, and deployed."
