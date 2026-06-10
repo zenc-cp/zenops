@@ -1,0 +1,27 @@
+# claw-runtime-drift-check.service — oneshot drift watchdog for
+# /home/slimslimchan/claw (zenc-cp/zenops#1).
+#
+# Install:
+#   sudo install -o root -g root -m 0644 \
+#     deploy/claw-runtime-drift-check.service /etc/systemd/system/
+#   sudo install -o root -g root -m 0644 \
+#     deploy/claw-runtime-drift-check.timer   /etc/systemd/system/
+#   sudo install -o root -g root -m 0755 \
+#     deploy/claw-runtime-drift-check.sh      /opt/claw-runtime/claw-runtime-drift-check.sh
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now claw-runtime-drift-check.timer
+
+[Unit]
+Description=ZenOps claw-runtime drift watchdog — alarms on uncommitted edits in /home/slimslimchan/claw
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=slimslimchan
+Environment=DRIFT_MAX_MINUTES=15
+Environment=CLAW_DIR=/home/slimslimchan/claw
+ExecStart=/opt/claw-runtime/claw-runtime-drift-check.sh
+# exit 0 (clean / within grace) and exit 2 (drift alarm) are both "handled".
+SuccessExitStatus=0 2
+StandardOutput=journal
+StandardError=journal

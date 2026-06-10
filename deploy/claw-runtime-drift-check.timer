@@ -1,0 +1,14 @@
+# claw-runtime-drift-check.timer — fires the drift watchdog every 5 minutes.
+# See claw-runtime-drift-check.service for install instructions.
+
+[Unit]
+Description=Run claw-runtime drift watchdog every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=15s
+Unit=claw-runtime-drift-check.service
+
+[Install]
+WantedBy=timers.target
