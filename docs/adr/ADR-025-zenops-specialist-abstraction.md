@@ -198,6 +198,37 @@ These are not blockers for ADR-025 (the dispatch round-trip works), but they are
 
 The original v1 text said: "Implementation of this ADR cannot ship until a result-retrieval surface exists." That constraint is now satisfied by option (b) from the v1 alternatives list (status-file convention at `/var/lib/design-e/results/{task_id}.json`). The other two alternatives (`list_events` RPC and SSE/WebSocket) were not pursued — option (b) was simpler and sufficient.
 
+## Architectural boundary: specialists NEVER flow through zenbrain.orchestrator.dispatch
+
+> **Amendment 2026-06-11 (Issue zenc-cp/zenbrain#72):** This subsection was added after audit-adr025-e2e (session bbe7c703) flagged a donut defense-in-depth gap.
+
+Two orchestration layers coexist in production:
+
+| Layer | Source of truth | Allow-list enforced at |
+|---|---|---|
+| **Specialist** (this ADR) | `design_e_endpoint.py` → `hermes-agent/consumer.py` | `VALID_SPECIALISTS` at design_e_endpoint.py:293 **and** `persona.py:84` |
+| **Role** (ADR-004 / ADR-030) | `zenbrain.orchestrator.dispatch` → registered runners | `roles.yaml` + JSON Schema validation at `dispatch.enqueue()` |
+
+These layers **do not compose**. There is no path `zenbrain.dispatch.enqueue(role="Scout", ...) → design-e → hermes-agent`. Per this ADR:
+
+- Specialist-typed work (`Scout, Hunter, Sentinel, Trader, Scribe, Ops`) is dispatched **directly through design-e's `/rpc/v1/dispatch` RPC**, consumed by `hermes-agent/consumer.py`. This is the path the persona-tuple decision above commits to.
+- Role-typed work (`watcher, researcher, coder, inbox-harness, …`) is dispatched **through `zenbrain.orchestrator.dispatch.enqueue()`**, claimed by runners listed in `runner_scopes` (clawpilot, atlas, aider, hermes_coder, copilot_cli, aoai_research).
+
+To make this boundary explicit (rather than implicit-by-convention), zenbrain enforces it defensively:
+
+- `zenbrain.orchestrator.dispatch.RESERVED_SPECIALISTS` (frozenset of lowercase specialist names) and `SpecialistDispatchError`, both added in PR zenc-cp/zenbrain#85.
+- `dispatch.enqueue(role=<specialist>, ...)` raises `SpecialistDispatchError` with an ADR-025 pointer **before** the role lookup runs — so even a `roles.yaml` entry literally named `Scout` is rejected.
+
+### Drift contract
+
+If the `VALID_SPECIALISTS` allow-list in `design_e_endpoint.py` changes (per the ADR-021 scaling argument), three sites must update in lockstep:
+
+1. `design-e/design_e_endpoint.py` — `VALID_SPECIALISTS` constant.
+2. `hermes-agent/agent/specialists/persona.py` — persona loader allow-list.
+3. `zenbrain/src/zenbrain/orchestrator/dispatch.py` — `RESERVED_SPECIALISTS` frozenset.
+
+`tests/orchestrator/test_dispatch_specialist_guard.py::test_reserved_specialists_constant_matches_design_e` in zenbrain asserts the shape; design-e's `tests/test_dispatch_endpoints.py` and hermes-agent's `tests/test_persona_loader.py` assert their respective sides. Failing any of these tests during a specialist-rename refactor means a missed lockstep update.
+
 ## Implementation pointer (informative, not normative)
 
 The minimum work to make this ADR real:
