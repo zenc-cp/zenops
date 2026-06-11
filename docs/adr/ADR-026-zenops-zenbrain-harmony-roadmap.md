@@ -19,6 +19,88 @@ v5/v6 reconciles ADR-026 with the now-canonical persona-tuple model. The ADR-024
 
 ---
 
+## v7 amendment — 2026-06-11 substrate actual
+
+Captured 2026-06-11 16:50 HKT (session 2d0cb7ae, follows substrate audit recorded in
+`session-state/5b017110-.../files/adr026-substrate-readiness-2026-06-11.md`). This section
+reconciles what actually shipped against the v5/v6 sequencing above; it amends scope and
+status only, no architectural decision is reversed.
+
+### Shipped in zenbrain (PRs #88-93, all merged to main on 2026-06-11)
+
+| PR | Step | Scope landed | Files of record |
+|---|---|---|---|
+| #88 | Step 0 acceptance gate (Gap B) | `aru1_quiesce.ps1` drain procedure + Python `aru1_quiesce.py` module + 15 tests; synthetic 3-task in-flight scenario green | `src/zenbrain/orchestrator/aru1_quiesce.py`, `scripts/aru1_quiesce.ps1` |
+| #89 | Step 4 slice 1 (Gap A in-code + Gap C runner seed) | `bridge_writeback.accept_specialist_result` primitive + 13 tests; `hermes_dispatcher` row seeded in `runners_registry` (sandbox+infra scopes per v6 §Key decisions #1) | `src/zenbrain/orchestrator/bridge_writeback.py`, `src/zenbrain/schema_v2.sql` (runners_registry seed L58), `roles.yaml::runner_scopes` |
+| #90 | Step 3a (Gap C tokens seed) | `dispatch_tokens` table DDL added to `schema_v2.sql`; `issue_token` / `consume_token` / `complete_token` operations + 17 tests; atomic `UPDATE ... WHERE consumed_at IS NULL RETURNING` consume path matches v6 §Key decisions #3 | `src/zenbrain/orchestrator/dispatch_tokens.py`, `src/zenbrain/schema_v2.sql` |
+| #91 | Step 4 slice 2 (Gap A in-code) | `bridge_dispatcher.run_once()` polling worker + 14 tests | `src/zenbrain/orchestrator/bridge_dispatcher.py` |
+| #93 | Step 4 slice 3 (Gap A in-code) | `bridge_client.build_design_e_client(base_url, token_provider)` HTTP client factories + 19 tests | `src/zenbrain/orchestrator/bridge_client.py` |
+
+Pre-#88 dependencies that also landed earlier this session: PR #86 (`Loop4Pipeline` facade
++ 14 tests + canary at `~/.copilot/zenbrain/scripts/loop4_canary.py`) and PR #87
+(`loop_router.route()` → `dispatch()` rename). Test count at end of session: 1014 green,
+ruff + mypy clean.
+
+### Scope clarification — Step 4 split into "in-code" vs "transport"
+
+ADR-026 v5/v6 Step 4 acceptance read as a single deliverable ("dispatch → gateway →
+Hermes responds → write-back endpoint → `agent_results` row → `watcher` triggers
+downstream task"). What actually shipped is the **in-code half only**: every zenbrain-side
+primitive needed to accept and write back a specialist result exists, is unit-tested, and
+has a polling worker + HTTP client factory ready to call out. The **transport half** —
+the design-e ingest endpoint, the scheduler that runs `bridge_dispatcher.run_once()`, and
+the token provider for the HTTP client — is explicitly **out of scope for ADR-026
+substrate completion** and is delegated to follow-on work tracked separately (see "Open
+substrate items" below). Step 4 acceptance criterion #1 (two-step workflow through real
+gateway) is therefore **not** met by this set of PRs; the round-trip cannot complete
+end-to-end until the design-e endpoint exists.
+
+### Gap C resolution
+
+The substrate audit flagged ambiguity between "architecture drift — specialist dispatch
+happens entirely outside zenbrain's lease system" vs "unfinished plumbing the plan
+accidentally skipped". PRs #89 + #90 resolve to the latter: `hermes_dispatcher` and
+`dispatch_tokens` are now both seeded exactly as v5/v6 specified, with the v6 §Key
+decisions #1 single-runner / six-persona model preserved. No ADR drift; the plan was
+correct, the plumbing landed.
+
+### Open substrate items (not addressed by these PRs)
+
+The following remain unresolved and gate the Step 4 acceptance test:
+
+1. **design-e ingest endpoint** — `POST /rpc/v1/bridge/result` does not exist. Must wrap
+   `dispatch_tokens.consume_token` → `bridge_writeback.accept_specialist_result` →
+   `dispatch_tokens.complete_token`. Lives in the design-e repo / Scratchpad, not
+   zenbrain.
+2. **Scheduler for `bridge_dispatcher.run_once()`** undecided — systemd timer on
+   nanoclaw-az vs Container App scheduled job vs zenbrain automation slot.
+3. **Token provider for `bridge_client`** undecided — Entra MI (Container App only),
+   device-code via msal-python (blocked on Issue #68 AAD app register in tenant
+   72f988bf), or static shim token for smoke-test only.
+4. **Production schema apply** — `schema_v2.sql` changes (Gap C tables) are in-repo only;
+   the live `pg-atlas-orchestrator` Flexible Server has not been migrated. The
+   `files/apply_ddl.py` pattern is the intended applier.
+
+These four items are **not** ADR-026 substrate scope; they are operational follow-ups.
+ADR-026 Step 4 acceptance criterion #1 will remain UNMET until items #1-#3 land.
+
+### Status delta
+
+| Step | v6 status | v7 actual |
+|---|---|---|
+| 0 | gated | ✅ ARU-1 quiesce drill landed (PR #88) |
+| 1 | gated | ✅ (carried; `FOR UPDATE SKIP LOCKED` in `dispatch.py:378`) |
+| 2 | gated | ⚠️ Hermes-side consumer live (S11a smoke 2026-06-09); identity check + audit-log columns not re-verified this session |
+| 3a | gated | ✅ in-code (PR #90); design-e gateway endpoint side still pending |
+| 3b | gated | ✅ (carried; `consumer.py:273-277` + `design_e_endpoint.py:477-535`) |
+| 4 | gated | ⚠️ zenbrain-side primitives complete (PRs #89/#91/#93); transport half pending — **ARU-1 not yet sealable** |
+| 5 | not started | not started |
+| 6 | not started | not started |
+| 7 | not started | not started |
+| 8 | not started | not started |
+
+---
+
 ## Decision
 
 Pursue **Option A (Depth-First, reframed)**:
