@@ -4,7 +4,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 from vm_health_check import (
     ProbeResult, decide, format_alert,
-    probe_http, probe_systemd_active, main,
+    probe_http, probe_systemd_active, probe_tcp, main,
 )
 
 
@@ -79,6 +79,56 @@ def test_probe_systemd_active_false_with_state_in_detail():
         r = probe_systemd_active("hermes")
         assert r.ok is False
         assert "failed" in r.detail
+
+
+def test_probe_tcp_ok_when_socket_connects():
+    """Catches claw-stack-jp#165: api_server platform up + port bound."""
+    fake_sock = MagicMock()
+    fake_sock.__enter__ = MagicMock(return_value=fake_sock)
+    fake_sock.__exit__ = MagicMock(return_value=False)
+    with patch("vm_health_check.socket.create_connection", return_value=fake_sock):
+        r = probe_tcp("hermes-api-server", "127.0.0.1", 8642)
+        assert r.ok is True
+        assert r.name == "hermes-api-server"
+        assert "8642" in r.detail
+
+
+def test_probe_tcp_fails_on_connection_refused():
+    """Regression for #165: port not bound -> alert fires."""
+    with patch("vm_health_check.socket.create_connection",
+               side_effect=ConnectionRefusedError("refused")):
+        r = probe_tcp("hermes-api-server", "127.0.0.1", 8642)
+        assert r.ok is False
+        assert "127.0.0.1:8642" in r.detail
+        assert "refused" in r.detail
+
+
+def test_probe_tcp_fails_on_timeout():
+    import socket as _socket
+    with patch("vm_health_check.socket.create_connection",
+               side_effect=_socket.timeout("timed out")):
+        r = probe_tcp("hermes-api-server", "127.0.0.1", 8642)
+        assert r.ok is False
+        assert "timed out" in r.detail
+
+
+def test_collect_probes_includes_8642_tcp_probe():
+    """The whole point of #165's action item: ensure the probe is wired in."""
+    from vm_health_check import collect_probes
+    # Mock all underlying primitives so we don't hit real systemd/HTTP/TCP
+    with patch("vm_health_check.probe_systemd_active",
+               return_value=ProbeResult(name="x", ok=True)), \
+         patch("vm_health_check.probe_http",
+               return_value=ProbeResult(name="x", ok=True)), \
+         patch("vm_health_check.probe_tcp") as mock_tcp:
+        mock_tcp.return_value = ProbeResult(name="hermes-api-server", ok=True)
+        results = collect_probes()
+    # Must have been called with 8642 specifically.
+    tcp_calls = [c for c in mock_tcp.call_args_list]
+    assert any(
+        c.args[2] == 8642 or c.kwargs.get("port") == 8642
+        for c in tcp_calls
+    ), f"collect_probes must include a TCP probe for port 8642 (got {tcp_calls})"
 
 
 def test_main_posts_to_webhook_on_failure():
