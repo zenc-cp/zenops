@@ -83,6 +83,21 @@ def probe_systemd_active(unit: str) -> ProbeResult:
         return ProbeResult(name=unit, ok=False, detail=str(e))
 
 
+def probe_tcp(name: str, host: str, port: int, timeout: float = 3.0) -> ProbeResult:
+    """Probe TCP reachability — for services with no HTTP health route.
+
+    Catches the class of outage where a process is `systemctl active` but
+    its inner socket never bound (e.g. hermes-gateway api_server platform
+    refusing to start without API_SERVER_KEY, where the service unit still
+    reports active because the parent process is up). See claw-stack-jp#165.
+    """
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return ProbeResult(name=name, ok=True, detail=f"{host}:{port} reachable")
+    except Exception as e:
+        return ProbeResult(name=name, ok=False, detail=f"{host}:{port} {e}")
+
+
 # --- collection + delivery ----------------------------------------------
 
 def collect_probes() -> List[ProbeResult]:
@@ -95,6 +110,11 @@ def collect_probes() -> List[ProbeResult]:
         probe_systemd_active("zenops-consumer"),
         probe_http("shim", "http://127.0.0.1:8403/v1/models"),
         probe_http("hermes-workspace", "http://127.0.0.1:8092/health"),
+        # claw-stack-jp#165: hermes-gateway api_server platform binds 8642 only
+        # when API_SERVER_KEY is set. Outage 2026-06-03 to 2026-06-12 went
+        # undetected because the service unit stayed "active" — only the
+        # inner platform refused to start. TCP probe catches this class.
+        probe_tcp("hermes-api-server", "127.0.0.1", 8642),
     ]
 
 
